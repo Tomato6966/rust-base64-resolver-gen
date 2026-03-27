@@ -1,4 +1,5 @@
-use actix_web::{web, App, HttpResponse, HttpServer, Responder, Result, Error};
+use actix_web::{web, App, HttpResponse, HttpServer, Responder, Result, Error, http::header, HttpRequest};
+
 use actix_multipart::Multipart;
 use futures::{StreamExt, TryStreamExt};
 use serde::Deserialize;
@@ -43,7 +44,34 @@ struct AppState {
 struct Base64Payload {
     base64: String,
 }
-
+// Simple index page that explains how to use the service
+async fn index(_req: HttpRequest) -> impl Responder {
+    HttpResponse::Ok()
+        .content_type("text/html; charset=utf-8")
+        .body(
+            r#"
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Base64 Image Service</title>
+  </head>
+  <body>
+    <h1>Base64 Image Service</h1>
+    <p>Use this service to upload Base64-encoded PNG images and retrieve them by ID or MD5 hash.</p>
+    <h2>Endpoints</h2>
+    <ul>
+      <li><code>POST /image</code> (JSON or form body: <code>{ "base64": "&lt;base64-data&gt;" }</code>) returns <code>{ "urlPath": "/image/{id}" }</code>.</li>
+      <li><code>POST /image/multipart</code> (multipart/form-data field: <code>base64</code>) returns <code>{ "urlPath": "/image/{id}" }</code>.</li>
+      <li><code>GET /image/{id}</code> returns the raw PNG image.</li>
+      <li><code>GET /md5/{hash}</code> returns the PNG image stored in the DB for the given MD5 hash.</li>
+    </ul>
+    <p>Unknown paths will redirect back to this page.</p>
+  </body>
+</html>
+"#,
+        )
+}
 async fn post_image(
     payload: web::Either<web::Json<Base64Payload>, web::Form<Base64Payload>>,
     data: web::Data<AppState>,
@@ -265,13 +293,24 @@ async fn main() -> std::io::Result<()> {
     info!("Server starting on {}:{}", settings.server.hostname, settings.server.port);
 
     HttpServer::new(move || {
-        App::new()
-            .app_data(app_state.clone())
-            .wrap(actix_web::middleware::Logger::default())
-            .route("/image", web::post().to(post_image))
-            .route("/image/multipart", web::post().to(post_image_multipart))
-            .route("/image/{id}", web::get().to(get_image))
-            .route("/md5/{hash}", web::get().to(get_image_by_md5))
+    App::new()
+        .app_data(app_state.clone())
+        .wrap(actix_web::middleware::Logger::default())
+        // index route
+        .route("/", web::get().to(index))
+        // your existing routes
+        .route("/image", web::post().to(post_image))
+        .route("/image/multipart", web::post().to(post_image_multipart))
+        .route("/image/{id}", web::get().to(get_image))
+        .route("/md5/{hash}", web::get().to(get_image_by_md5))
+        // catch-all: redirect anything unknown to "/"
+        .default_service(
+            web::route().to(|| async {
+                HttpResponse::Found()
+                    .insert_header((header::LOCATION, "/"))
+                    .finish()
+            }),
+        )
     })
     .bind((settings.server.hostname.as_str(), settings.server.port))?
     .run()
