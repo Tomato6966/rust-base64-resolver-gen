@@ -1,0 +1,45 @@
+<section class="hero">
+  <div>
+    <h1>Upload</h1>
+    <p>Upload an image file (PNG, JPG, WebP, GIF) or paste raw base64 data. The image will be cached and you will receive a URL to retrieve it.</p>
+  </div>
+  <nav class="paper card">
+    <a href="/">Home</a>
+    <a href="/explore">Explore</a>
+  </nav>
+</section>
+
+{{ error_html|safe }}
+{{ result_html|safe }}
+
+<section class="paper card">
+  <div class="tabs">
+    <button class="tab active" type="button" onclick="switchTab(event, 'file')">Upload File</button>
+    <button class="tab" type="button" onclick="switchTab(event, 'base64')">Paste Base64</button>
+  </div>
+
+  <div id="tab-file" class="tab-panel active">
+    <form method="post" action="/upload" enctype="multipart/form-data">
+      <input type="hidden" name="mode" value="file">
+      <label>Image file<input type="file" name="file" accept="image/png,image/jpeg,image/webp,image/gif" required></label>
+      <button type="submit">Upload File</button>
+    </form>
+  </div>
+
+  <div id="tab-base64" class="tab-panel">
+    <form method="post" action="/upload" enctype="multipart/form-data">
+      <input type="hidden" name="mode" value="base64">
+      <label>Base64 data<textarea name="base64" placeholder="Paste your base64 encoded image data here..." required></textarea></label>
+      <button type="submit">Upload Base64</button>
+    </form>
+  </div>
+</section>
+
+<script>
+function switchTab(event, name) {
+  document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
+  document.querySelectorAll('.tab-panel').forEach(function(p) { p.classList.remove('active'); });
+  event.target.classList.add('active');
+  document.getElementById('tab-' + name).classList.add('active');
+}
+</script>

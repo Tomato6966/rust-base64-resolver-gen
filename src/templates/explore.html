@@ -1,0 +1,61 @@
+<section class="hero">
+  <div>
+    <h1>Explore</h1>
+    <p>Browse images currently held in the in-memory cache and database-backed image records.</p>
+  </div>
+  <nav class="paper card">
+    <a href="/">Home</a>
+    <a href="/upload">Upload</a>
+  </nav>
+</section>
+
+<section class="grid two">
+  <article class="paper card stack">
+    <div class="split">
+      <h2 style="margin:0;">In-Memory Cache</h2>
+      <span class="badge cache">{{ cache_count }} entries</span>
+    </div>
+
+    {% if cache_entries|length == 0 %}
+      <p class="small">No images in cache right now.</p>
+    {% else %}
+      <div class="img-grid">
+        {% for e in cache_entries %}
+          <a href="/image/{{ e.id }}" title="{{ e.id }}">
+            <img src="/image/{{ e.id }}" loading="lazy" alt="cached">
+          </a>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </article>
+
+  <article class="paper card stack">
+    <div class="split">
+      <h2 style="margin:0;">Database Images</h2>
+      <span class="badge db">{{ db_count }} records</span>
+    </div>
+
+    {% if db_entries|length == 0 %}
+      <p class="small">No database-backed images found.</p>
+    {% else %}
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Hash</th>
+            <th>Name</th>
+            <th>Saved</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for e in db_entries %}
+            <tr>
+              <td><a href="/md5/{{ e.hash }}" class="mono">{{ e.hash }}</a></td>
+              <td>{{ e.meta_name }}</td>
+              <td class="mono">{{ e.saved_at }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </article>
+</section>

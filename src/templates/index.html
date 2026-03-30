@@ -1,0 +1,26 @@
+<section class="hero">
+  <div>
+    <h1>Base64 Image Service</h1>
+    <p>Upload images or base64 data, explore cached entries, and retrieve images by UUID or MD5 hash.</p>
+  </div>
+  <nav class="paper card">
+    <a href="/upload">Upload</a>
+    <a href="/explore">Explore</a>
+  </nav>
+</section>
+
+<section class="grid three" style="margin-bottom: 18px;">
+  <article class="paper metric"><span>Cache Entries</span><strong>{{ cache_count }}</strong></article>
+  <article class="paper metric"><span>DB Images</span><strong>{{ db_count }}</strong></article>
+  <article class="paper metric"><span>Cache Capacity</span><strong>{{ cache_capacity }}</strong></article>
+</section>
+
+<section class="paper card stack">
+  <h2 style="margin:0;">API Endpoints</h2>
+  <div class="grid two">
+    <div class="metric"><span>Upload</span><strong class="mono">POST /image</strong><div class="small">JSON or form body with a <span class="mono">base64</span> field.</div></div>
+    <div class="metric"><span>Multipart</span><strong class="mono">POST /image/multipart</strong><div class="small">Multipart form upload with a <span class="mono">base64</span> field.</div></div>
+    <div class="metric"><span>Retrieve</span><strong class="mono">GET /image/{id}</strong><div class="small">Reads from the in-memory cache.</div></div>
+    <div class="metric"><span>Lookup</span><strong class="mono">GET /md5/{hash}</strong><div class="small">Reads the image payload from PostgreSQL by MD5 hash.</div></div>
+  </div>
+</section>

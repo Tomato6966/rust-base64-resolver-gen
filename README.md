@@ -37,6 +37,8 @@ Change into the project directory:
 cd rust-base64-resolver-gen
 ```
 
+Now rename `example.config.toml` to `config.toml` + fill in the values
+
 3. **Build the Project**
 
 Use Cargo to build the project:
