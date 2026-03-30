@@ -170,7 +170,8 @@ async fn handle_upload(
     let mut base64_text = String::new();
 
     while let Some(mut field) = payload.try_next().await? {
-        let name = field.name().unwrap_or("").to_string();
+        let name = field.name().to_string();
+
         match name.as_str() {
             "mode" => {
                 while let Some(chunk) = field.next().await {
@@ -214,7 +215,9 @@ async fn handle_upload(
                     }
                 }
             }
-            _ => while field.next().await.is_some() {},
+            _ => {
+                while field.next().await.is_some() {}
+            }
         }
     }
 
@@ -361,13 +364,14 @@ async fn post_image_multipart(
     let mut base64_str = String::new();
 
     while let Some(mut field) = payload.try_next().await? {
-        if field.name() == Some("base64") {
+        if field.name() == "base64" {
             while let Some(chunk) = field.next().await {
                 let chunk = chunk?;
                 base64_str.push_str(&String::from_utf8_lossy(&chunk));
             }
         }
     }
+   
 
     if base64_str.is_empty() {
         return Ok(HttpResponse::BadRequest().body("Missing 'base64' field"));
