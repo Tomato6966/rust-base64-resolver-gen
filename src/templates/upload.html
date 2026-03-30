@@ -1,7 +1,7 @@
 <section class="hero">
   <div>
     <h1>Upload</h1>
-    <p>Upload an image file (PNG, JPG, WebP, GIF) or paste raw base64 data. The image will be cached and you will receive a URL to retrieve it.</p>
+    <p>Upload an image file, drag and drop one into the page, or paste an image from your clipboard. You can also still paste raw base64 data manually.</p>
   </div>
   <nav class="paper card">
     <a href="/">Home</a>
@@ -14,15 +14,46 @@
 
 <section class="paper card">
   <div class="tabs">
-    <button class="tab active" type="button" onclick="switchTab(event, 'file')">Upload File</button>
+    <button class="tab active" type="button" onclick="switchTab(event, 'file')">Image Upload</button>
     <button class="tab" type="button" onclick="switchTab(event, 'base64')">Paste Base64</button>
   </div>
 
   <div id="tab-file" class="tab-panel active">
-    <form method="post" action="/upload" enctype="multipart/form-data">
+    <form method="post" action="/upload" enctype="multipart/form-data" id="upload-form">
       <input type="hidden" name="mode" value="file">
-      <label>Image file<input type="file" name="file" accept="image/png,image/jpeg,image/webp,image/gif" required></label>
-      <button type="submit">Upload File</button>
+
+      <input
+        id="file-input"
+        type="file"
+        name="file"
+        accept="image/png,image/jpeg,image/webp,image/gif"
+        required
+        hidden
+      >
+
+      <div
+        id="drop-zone"
+        class="drop-zone"
+        tabindex="0"
+        role="button"
+        aria-label="Upload image by clicking, dragging and dropping, or pasting"
+      >
+        <div class="drop-zone-inner">
+          <strong id="drop-zone-title">Drop image here</strong>
+          <p class="small" style="margin:8px 0 0;">
+            Click to choose a file, drag & drop an image, or press Ctrl+V / Cmd+V to paste one.
+          </p>
+          <p id="file-name" class="small file-name"></p>
+
+          <div id="preview-wrap" class="preview-wrap" hidden>
+            <img id="preview-image" alt="Selected image preview">
+          </div>
+        </div>
+      </div>
+
+      <div class="split" style="margin-top:14px;">
+        <button id="upload-submit" type="submit" class="upload-submit" disabled>Upload Image</button>
+      </div>
     </form>
   </div>
 
@@ -35,6 +66,115 @@
   </div>
 </section>
 
+<style>
+  .drop-zone {
+    border: 2px dashed rgba(27, 26, 23, 0.18);
+    border-radius: 22px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.62), rgba(255,255,255,0.42));
+    min-height: 240px;
+    display: grid;
+    place-items: center;
+    text-align: center;
+    padding: 24px;
+    transition:
+      border-color 180ms ease,
+      background 180ms ease,
+      transform 180ms ease,
+      box-shadow 180ms ease;
+    outline: none;
+  }
+
+  .drop-zone:hover,
+  .drop-zone:focus-visible {
+    border-color: rgba(194, 75, 45, 0.55);
+    background: linear-gradient(180deg, rgba(255,255,255,0.8), rgba(255,255,255,0.62));
+  }
+
+  .drop-zone.dragover {
+    border-color: var(--brand);
+    background: linear-gradient(180deg, rgba(194, 75, 45, 0.18), rgba(217, 130, 59, 0.10));
+    box-shadow:
+      0 0 0 4px rgba(194, 75, 45, 0.12),
+      inset 0 0 0 1px rgba(194, 75, 45, 0.22),
+      0 18px 42px rgba(127, 39, 20, 0.14);
+    transform: translateY(-2px) scale(1.005);
+  }
+
+  .drop-zone.has-file {
+    border-style: solid;
+    border-width: 2px;
+    border-color: rgba(31, 111, 67, 0.82);
+    background:
+      radial-gradient(circle at top, rgba(31, 111, 67, 0.18), transparent 55%),
+      linear-gradient(180deg, rgba(31, 111, 67, 0.12), rgba(255,255,255,0.72));
+    box-shadow:
+      0 0 0 5px rgba(31, 111, 67, 0.14),
+      0 24px 54px rgba(31, 111, 67, 0.16),
+      inset 0 1px 0 rgba(255,255,255,0.65);
+  }
+
+  .drop-zone.has-file #drop-zone-title {
+    color: var(--good);
+  }
+
+  .drop-zone-inner strong {
+    display: block;
+    font-size: 1.2rem;
+  }
+
+  .file-name {
+    margin: 12px 0 0;
+    min-height: 1.4em;
+    color: var(--ink);
+    font-weight: 700;
+  }
+
+  .preview-wrap {
+    margin-top: 18px;
+    display: flex;
+    justify-content: center;
+  }
+
+  .preview-wrap img {
+    max-width: min(100%, 380px);
+    max-height: 240px;
+    border-radius: 18px;
+    border: 1px solid rgba(27, 26, 23, 0.12);
+    box-shadow: 0 14px 34px rgba(68, 43, 24, 0.16);
+    background: #fff;
+    object-fit: contain;
+  }
+
+  .upload-submit {
+    min-width: 180px;
+    opacity: 1;
+    transition:
+      background 180ms ease,
+      color 180ms ease,
+      opacity 180ms ease,
+      transform 180ms ease,
+      box-shadow 180ms ease;
+  }
+
+  .upload-submit:disabled {
+    background: linear-gradient(135deg, #bdb6a8, #a79f90);
+    color: rgba(255,255,255,0.92);
+    cursor: not-allowed;
+    box-shadow: none;
+    opacity: 0.95;
+  }
+
+  .upload-submit:not(:disabled) {
+    background: linear-gradient(135deg, var(--brand), #d9823b);
+    color: #fff;
+    box-shadow: 0 10px 24px rgba(194, 75, 45, 0.22);
+  }
+
+  .upload-submit:not(:disabled):hover {
+    transform: translateY(-1px);
+  }
+</style>
+
 <script>
 function switchTab(event, name) {
   document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
@@ -42,4 +182,130 @@ function switchTab(event, name) {
   event.target.classList.add('active');
   document.getElementById('tab-' + name).classList.add('active');
 }
+
+(function () {
+  const dropZone = document.getElementById('drop-zone');
+  const fileInput = document.getElementById('file-input');
+  const fileName = document.getElementById('file-name');
+  const submitButton = document.getElementById('upload-submit');
+  const previewWrap = document.getElementById('preview-wrap');
+  const previewImage = document.getElementById('preview-image');
+
+  if (!dropZone || !fileInput || !submitButton) return;
+
+  function isImage(file) {
+    return file && file.type && file.type.startsWith('image/');
+  }
+
+  function clearPreview() {
+    previewImage.removeAttribute('src');
+    previewWrap.hidden = true;
+  }
+
+  function setPreview(file) {
+    const url = URL.createObjectURL(file);
+    previewImage.src = url;
+    previewImage.onload = function () {
+      URL.revokeObjectURL(url);
+    };
+    previewWrap.hidden = false;
+  }
+
+  function setIdleState(message) {
+    if (message) fileName.textContent = message;
+    dropZone.classList.remove('has-file');
+    submitButton.disabled = true;
+    clearPreview();
+  }
+
+  function setActiveState(file) {
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    fileInput.files = dt.files;
+
+    fileName.textContent = 'Selected: ' + file.name;
+    dropZone.classList.add('has-file');
+    submitButton.disabled = false;
+    setPreview(file);
+  }
+
+  function pickFirstImage(files) {
+    if (!files || !files.length) return null;
+    for (const file of files) {
+      if (isImage(file)) return file;
+    }
+    return null;
+  }
+
+  dropZone.addEventListener('click', function () {
+    fileInput.click();
+  });
+
+  dropZone.addEventListener('keydown', function (event) {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      fileInput.click();
+    }
+  });
+
+  fileInput.addEventListener('change', function () {
+    const file = pickFirstImage(fileInput.files);
+    if (file) {
+      setActiveState(file);
+    } else {
+      setIdleState('');
+    }
+  });
+
+  ['dragenter', 'dragover'].forEach(function (eventName) {
+    dropZone.addEventListener(eventName, function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      dropZone.classList.add('dragover');
+    });
+  });
+
+  ['dragleave', 'dragend', 'drop'].forEach(function (eventName) {
+    dropZone.addEventListener(eventName, function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (eventName !== 'drop') {
+        dropZone.classList.remove('dragover');
+      }
+    });
+  });
+
+  dropZone.addEventListener('drop', function (event) {
+    dropZone.classList.remove('dragover');
+    const file = pickFirstImage(event.dataTransfer.files);
+    if (file) {
+      setActiveState(file);
+      return;
+    }
+    setIdleState('No image found in dropped items.');
+  });
+
+  document.addEventListener('paste', function (event) {
+    if (!document.getElementById('tab-file').classList.contains('active')) return;
+
+    const items = event.clipboardData && event.clipboardData.items
+      ? Array.from(event.clipboardData.items)
+      : [];
+
+    for (const item of items) {
+      if (item.type && item.type.startsWith('image/')) {
+        event.preventDefault();
+        const file = item.getAsFile();
+        if (file) {
+          const ext = file.type.split('/')[1] || 'png';
+          const namedFile = new File([file], 'pasted-image.' + ext, { type: file.type });
+          setActiveState(namedFile);
+          return;
+        }
+      }
+    }
+  });
+
+  setIdleState('');
+})();
 </script>
