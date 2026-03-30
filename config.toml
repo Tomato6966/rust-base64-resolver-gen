@@ -1,6 +1,6 @@
 [server]
-hostname = "0.0.0.0"
+hostname = "127.0.0.1"
 port = 3555
 
 [database]
-url = "postgresql://postgres:password@localhost:5432/image_db"
+url = "postgresql://rust_base64_resolver:X77aLM0Ko70gD7uwoXUjYY3l03B8gZl5@127.0.0.1:5432/rust_base64_resolver"
