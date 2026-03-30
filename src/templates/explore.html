@@ -1,4 +1,4 @@
-<section class="hero">
+<section class="hero" style="flex-shrink:0;">
   <div>
     <h1>Explore</h1>
     <p>Browse images currently held in the in-memory cache and database-backed image records.</p>
@@ -9,53 +9,117 @@
   </nav>
 </section>
 
-<section class="grid two">
-  <article class="paper card stack">
-    <div class="split">
-      <h2 style="margin:0;">In-Memory Cache</h2>
-      <span class="badge cache">{{ cache_count }} entries</span>
-    </div>
-
-    {% if cache_entries|length == 0 %}
-      <p class="small">No images in cache right now.</p>
-    {% else %}
-      <div class="img-grid">
-        {% for e in cache_entries %}
-          <a href="/image/{{ e.id }}" title="{{ e.id }}">
-            <img src="/image/{{ e.id }}" loading="lazy" alt="cached">
-          </a>
-        {% endfor %}
-      </div>
-    {% endif %}
+<section class="grid three" style="flex-shrink:0; margin-bottom:14px;">
+  <article class="paper metric">
+    <span>Cache entries</span>
+    <strong>{{ cache_count }}</strong>
   </article>
-
-  <article class="paper card stack">
-    <div class="split">
-      <h2 style="margin:0;">Database Images</h2>
-      <span class="badge db">{{ db_count }} records</span>
-    </div>
-
-    {% if db_entries|length == 0 %}
-      <p class="small">No database-backed images found.</p>
-    {% else %}
-      <table class="table">
-        <thead>
-          <tr>
-            <th>Hash</th>
-            <th>Name</th>
-            <th>Saved</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for e in db_entries %}
-            <tr>
-              <td><a href="/md5/{{ e.hash }}" class="mono">{{ e.hash }}</a></td>
-              <td>{{ e.meta_name }}</td>
-              <td class="mono">{{ e.saved_at }}</td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    {% endif %}
+  <article class="paper metric">
+    <span>Database records</span>
+    <strong>{{ db_count }}</strong>
+  </article>
+  <article class="paper metric">
+    <span>Page</span>
+    <strong>{{ page }} / {{ total_pages }}</strong>
   </article>
 </section>
+
+<section class="grid two" style="flex:1; min-height:0;">
+
+  <!-- Cache panel -->
+  <article class="paper card scroll-panel">
+    <div class="split" style="flex-shrink:0; margin-bottom:12px;">
+      <h2 style="margin:0;">In-Memory Cache</h2>
+      <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+        <div class="cols-control">
+          <span>Cols</span>
+          <input type="range" min="1" max="6" value="2"
+                 oninput="setCols(this, 'cache-grid', 'cache-cols-val')">
+          <span class="cols-val" id="cache-cols-val">2</span>
+        </div>
+        <span class="badge cache">{{ cache_count }} entries</span>
+      </div>
+    </div>
+
+    <div class="scroll-body">
+      {% if cache_entries|length == 0 %}
+        <p class="small">No images in cache right now.</p>
+      {% else %}
+        <div class="preview-grid" id="cache-grid">
+          {% for e in cache_entries %}
+            <article class="preview-card">
+              <a class="preview-thumb" href="/image/{{ e.id }}" title="{{ e.id }}">
+                <img src="/image/{{ e.id }}" loading="lazy" alt="cached image {{ loop.index }}">
+              </a>
+              <div class="preview-meta">
+                <div class="line">Cache ID</div>
+                <a class="hash-link" href="/image/{{ e.id }}">{{ e.id }}</a>
+              </div>
+            </article>
+          {% endfor %}
+        </div>
+      {% endif %}
+    </div>
+  </article>
+
+  <!-- DB panel -->
+  <article class="paper card scroll-panel">
+    <div class="split" style="flex-shrink:0; margin-bottom:12px;">
+      <h2 style="margin:0;">Database Images</h2>
+      <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+        <div class="cols-control">
+          <span>Cols</span>
+          <input type="range" min="1" max="6" value="2"
+                 oninput="setCols(this, 'db-grid', 'db-cols-val')">
+          <span class="cols-val" id="db-cols-val">2</span>
+        </div>
+        <span class="badge db">{{ db_count }} records</span>
+      </div>
+    </div>
+
+    <div class="scroll-body">
+      {% if db_entries|length == 0 %}
+        <p class="small">No database-backed images found.</p>
+      {% else %}
+        <div class="preview-grid" id="db-grid">
+          {% for e in db_entries %}
+            <article class="preview-card">
+              <a class="preview-thumb" href="/md5/{{ e.hash }}" title="{{ e.hash }}">
+                <img src="/md5/{{ e.hash }}" loading="lazy" alt="{{ e.meta_name or 'database image' }}">
+              </a>
+              <div class="preview-meta">
+                <div class="title meta-clamp">{{ e.meta_name if e.meta_name else "Untitled" }}</div>
+                <a class="hash-link meta-clamp" href="/md5/{{ e.hash }}">{{ e.hash }}</a>
+                <div class="line">{{ e.saved_at }}</div>
+              </div>
+            </article>
+          {% endfor %}
+        </div>
+      {% endif %}
+    </div>
+
+    {% if total_pages > 1 %}
+    <div class="pager">
+      <span class="small">Page {{ page }} of {{ total_pages }}</span>
+      <div class="pager-links">
+        {% if has_prev %}
+          <a class="pager-link" href="/explore?page={{ prev_page }}">← Prev</a>
+        {% endif %}
+        <a class="pager-link active" href="/explore?page={{ page }}">{{ page }}</a>
+        {% if has_next %}
+          <a class="pager-link" href="/explore?page={{ next_page }}">Next →</a>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+  </article>
+
+</section>
+
+<script>
+  function setCols(slider, gridId, valId) {
+    const v = slider.value;
+    document.getElementById(gridId).style.setProperty('--cols', v);
+    document.getElementById(valId).textContent = v;
+  }
+</script>

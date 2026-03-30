@@ -58,6 +58,11 @@ struct Base64Payload {
     base64: String,
 }
 
+#[derive(Deserialize)]
+struct ExploreQuery {
+    page: Option<usize>,
+}
+
 fn redirect(location: &str) -> HttpResponse {
     HttpResponse::Found()
         .insert_header((header::LOCATION, location))
@@ -109,13 +114,17 @@ async fn index(data: web::Data<AppState>) -> impl Responder {
     }
 }
 
-async fn explore_page(data: web::Data<AppState>) -> Result<impl Responder, Error> {
+async fn explore_page(
+    data: web::Data<AppState>,
+    query: web::Query<ExploreQuery>,
+) -> Result<impl Responder, Error> {
+    let per_page: i64 = 50;
+    let page = query.page.unwrap_or(1).max(1) as i64;
+    let offset = (page - 1) * per_page;
+
     let cache_entries: Vec<ExploreCache> = {
         let cache = data.images.lock().unwrap();
-        cache
-            .iter()
-            .map(|(id, _)| ExploreCache { id: id.clone() })
-            .collect()
+        cache.iter().map(|(id, _)| ExploreCache { id: id.clone() }).collect()
     };
 
     let client = data.db_pool.get().await.map_err(|e| {
@@ -123,13 +132,36 @@ async fn explore_page(data: web::Data<AppState>) -> Result<impl Responder, Error
         actix_web::error::ErrorInternalServerError("Database connection failed")
     })?;
 
-    let db_entries: Vec<ExploreDb> = client
-        .query(
+    let db_total: i64 = client
+        .query_one(
             &format!(
-                "SELECT hash, COALESCE(\"metaNameData\", ''), TO_CHAR(\"savedAt\", 'YYYY-MM-DD HH24:MI:SS') FROM \"{}\" ORDER BY \"savedAt\" DESC LIMIT 50",
+                "SELECT COUNT(*) FROM \"{}\"",
                 data.settings.app.icon_and_avatars_table
             ),
             &[],
+        )
+        .await
+        .map_err(|e| {
+            error!("Failed to count DB images for explore: {}", e);
+            actix_web::error::ErrorInternalServerError("Image count query failed")
+        })?
+        .get(0);
+
+    let db_entries: Vec<ExploreDb> = client
+        .query(
+            &format!(
+                r#"
+                SELECT
+                    hash,
+                    COALESCE("metaNameData", ''),
+                    TO_CHAR("savedAt", 'YYYY-MM-DD HH24:MI:SS')
+                FROM "{}"
+                ORDER BY "savedAt" DESC
+                LIMIT $1 OFFSET $2
+                "#,
+                data.settings.app.icon_and_avatars_table
+            ),
+            &[&per_page, &offset],
         )
         .await
         .map_err(|e| {
@@ -144,7 +176,21 @@ async fn explore_page(data: web::Data<AppState>) -> Result<impl Responder, Error
         })
         .collect();
 
-    let html = render_explore_page(&data.templates, &cache_entries, &db_entries).map_err(|e| {
+    let total_pages = if db_total == 0 {
+        1
+    } else {
+        ((db_total + per_page - 1) / per_page) as usize
+    };
+
+    let html = render_explore_page(
+        &data.templates,
+        &cache_entries,
+        &db_entries,
+        page as usize,
+        total_pages,
+        db_total,
+    )
+    .map_err(|e| {
         error!("Template render error on explore: {}", e);
         actix_web::error::ErrorInternalServerError("Failed to render page")
     })?;

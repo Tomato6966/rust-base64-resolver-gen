@@ -70,12 +70,21 @@ pub fn render_explore_page(
     env: &Environment<'static>,
     cache_entries: &[ExploreCache],
     db_entries: &[ExploreDb],
+    page: usize,
+    total_pages: usize,
+    db_total: i64,
 ) -> Result<String, minijinja::Error> {
     let body = env.get_template("explore.html")?.render(context! {
         cache_entries => cache_entries,
         db_entries => db_entries,
         cache_count => cache_entries.len(),
-        db_count => db_entries.len(),
+        db_count => db_total,
+        page => page,
+        total_pages => total_pages,
+        has_prev => page > 1,
+        has_next => page < total_pages,
+        prev_page => if page > 1 { page - 1 } else { 1 },
+        next_page => if page < total_pages { page + 1 } else { total_pages },
     })?;
 
     env.get_template("base.html")?.render(context! {
