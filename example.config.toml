@@ -9,3 +9,12 @@ url = "postgresql://postgres:password@localhost:5432/image_db"
 cache_size = 10000
 icon_and_avatars_table = "iconAndAvatars"
 max_upload_bytes = 52428800 # 50 MB
+
+
+[auth]
+enabled = true
+username = "admin"
+password = "supersecret"
+protect_upload = true
+protect_explore = true
+protect_api = true

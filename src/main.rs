@@ -25,7 +25,8 @@ use crate::templates::{
 struct Settings {
     server: ServerSettings,
     database: DatabaseSettings,
-    app: AppSettings,  // ← THIS LINE IS REQUIRED
+    app: AppSettings,
+    auth: Option<AuthSettings>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -63,10 +64,71 @@ struct ExploreQuery {
     page: Option<usize>,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+struct AuthSettings {
+    enabled: bool,
+    username: String,
+    password: String,
+    protect_upload: bool,
+    protect_explore: bool,
+    protect_api: bool,
+}
+
 fn redirect(location: &str) -> HttpResponse {
     HttpResponse::Found()
         .insert_header((header::LOCATION, location))
         .finish()
+}
+fn check_basic_auth(req: &actix_web::HttpRequest, settings: &Settings) -> bool {
+    let auth_cfg = match &settings.auth {
+        Some(a) if a.enabled => a,
+        _ => return true, // auth disabled or not configured → allow
+    };
+
+    let path = req.path();
+    let needs_auth = (auth_cfg.protect_upload && path.starts_with("/upload"))
+        || (auth_cfg.protect_explore && path.starts_with("/explore"))
+        || (auth_cfg.protect_api && (path == "/image"
+        || path == "/image/multipart"
+        || path.starts_with("/image/")));
+
+    if !needs_auth {
+        return true;
+    }
+
+    // Parse Authorization: Basic <base64>
+    let header_val = match req.headers().get("Authorization") {
+        Some(v) => match v.to_str() {
+            Ok(s) => s,
+            Err(_) => return false,
+        },
+        None => return false,
+    };
+
+    if !header_val.starts_with("Basic ") {
+        return false;
+    }
+
+    let decoded = match STANDARD.decode(&header_val[6..]) {
+        Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(s) => s,
+            Err(_) => return false,
+        },
+        Err(_) => return false,
+    };
+
+    let (user, pass) = match decoded.split_once(':') {
+        Some(pair) => pair,
+        None => return false,
+    };
+
+    user == auth_cfg.username && pass == auth_cfg.password
+}
+
+fn unauthorized_response() -> HttpResponse {
+    HttpResponse::Unauthorized()
+        .insert_header(("WWW-Authenticate", "Basic realm=\"Image Service\""))
+        .body("Unauthorized")
 }
 
 fn detect_content_type(bytes: &[u8]) -> Option<&'static str> {
@@ -115,9 +177,14 @@ async fn index(data: web::Data<AppState>) -> impl Responder {
 }
 
 async fn explore_page(
+    req: actix_web::HttpRequest,
     data: web::Data<AppState>,
     query: web::Query<ExploreQuery>,
 ) -> Result<impl Responder, Error> {
+    if !check_basic_auth(&req, &data.settings) {
+        return Ok(unauthorized_response());
+    }
+
     let per_page: i64 = 50;
     let page = query.page.unwrap_or(1).max(1) as i64;
     let offset = (page - 1) * per_page;
@@ -200,7 +267,14 @@ async fn explore_page(
         .body(html))
 }
 
-async fn upload_page(data: web::Data<AppState>) -> impl Responder {
+async fn upload_page(
+    req: actix_web::HttpRequest,
+    data: web::Data<AppState>,
+) -> impl Responder {
+    if !check_basic_auth(&req, &data.settings) {
+        return unauthorized_response();
+    }
+    
     match render_upload_page(&data.templates, None, None) {
         Ok(html) => HttpResponse::Ok()
             .content_type("text/html; charset=utf-8")
@@ -213,9 +287,14 @@ async fn upload_page(data: web::Data<AppState>) -> impl Responder {
 }
 
 async fn handle_upload(
+    req: actix_web::HttpRequest,
     mut payload: Multipart,
     data: web::Data<AppState>,
 ) -> Result<impl Responder, Error> {
+    if !check_basic_auth(&req, &data.settings) {
+        return Ok(unauthorized_response());
+    }
+    
     let mut mode = String::new();
     let mut file_bytes: Vec<u8> = Vec::new();
     let mut base64_text = String::new();
@@ -383,9 +462,15 @@ async fn handle_upload(
 }
 
 async fn post_image(
+    req: actix_web::HttpRequest,
     payload: web::Either<web::Json<Base64Payload>, web::Form<Base64Payload>>,
     data: web::Data<AppState>,
 ) -> Result<impl Responder, Error> {
+    if !check_basic_auth(&req, &data.settings) {
+        return Ok(HttpResponse::Unauthorized()
+            .insert_header(("WWW-Authenticate", "Basic realm=\"Image Service\""))
+            .json(serde_json::json!({ "error": "Unauthorized" })));
+    }
     let base64_str = match payload {
         web::Either::Left(json) => json.base64.clone(),
         web::Either::Right(form) => form.base64.clone(),
@@ -409,9 +494,15 @@ async fn post_image(
 }
 
 async fn post_image_multipart(
+    req: actix_web::HttpRequest,
     mut payload: Multipart,
     data: web::Data<AppState>,
 ) -> Result<impl Responder, Error> {
+    if !check_basic_auth(&req, &data.settings) {
+        return Ok(HttpResponse::Unauthorized()
+            .insert_header(("WWW-Authenticate", "Basic realm=\"Image Service\""))
+            .json(serde_json::json!({ "error": "Unauthorized" })));
+    }
     let mut base64_str = String::new();
 
     while let Some(mut field) = payload.try_next().await? {
