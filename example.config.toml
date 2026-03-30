@@ -4,3 +4,8 @@ port = 3555
 
 [database]
 url = "postgresql://postgres:password@localhost:5432/image_db"
+
+[app]
+cache_size = 10000
+icon_and_avatars_table = "iconAndAvatars"
+max_upload_bytes = 52428800 # 50 MB

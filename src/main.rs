@@ -21,14 +21,11 @@ use crate::templates::{
     ExploreDb,
 };
 
-const CACHE_SIZE: usize = 10_000;
-const ICON_AND_AVATARS_TABLE: &str = "iconAndAvatars";
-const MAX_UPLOAD_BYTES: usize = 50 * 1024 * 1024;
-
 #[derive(Debug, Deserialize, Clone)]
 struct Settings {
     server: ServerSettings,
     database: DatabaseSettings,
+    app: AppSettings,  // ← THIS LINE IS REQUIRED
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -42,10 +39,18 @@ struct DatabaseSettings {
     url: String,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+struct AppSettings {
+    cache_size: usize,
+    icon_and_avatars_table: String,
+    max_upload_bytes: usize,
+}
+
 struct AppState {
     images: Mutex<LruCache<String, Vec<u8>>>,
     db_pool: Pool,
     templates: minijinja::Environment<'static>,
+    settings: Settings,
 }
 
 #[derive(Deserialize)]
@@ -83,7 +88,7 @@ async fn index(data: web::Data<AppState>) -> impl Responder {
         Ok(client) => {
             client
                 .query_one(
-                    &format!("SELECT COUNT(*) FROM \"{}\"", ICON_AND_AVATARS_TABLE),
+                    &format!("SELECT COUNT(*) FROM \"{}\"", data.settings.app.icon_and_avatars_table),
                     &[],
                 )
                 .await
@@ -93,7 +98,7 @@ async fn index(data: web::Data<AppState>) -> impl Responder {
         Err(_) => 0,
     };
 
-    match render_index_page(&data.templates, cache_count, db_count) {
+    match render_index_page(&data.templates, cache_count, db_count, data.settings.app.cache_size) {
         Ok(html) => HttpResponse::Ok()
             .content_type("text/html; charset=utf-8")
             .body(html),
@@ -122,7 +127,7 @@ async fn explore_page(data: web::Data<AppState>) -> Result<impl Responder, Error
         .query(
             &format!(
                 "SELECT hash, COALESCE(\"metaNameData\", ''), TO_CHAR(\"savedAt\", 'YYYY-MM-DD HH24:MI:SS') FROM \"{}\" ORDER BY \"savedAt\" DESC LIMIT 50",
-                ICON_AND_AVATARS_TABLE
+                data.settings.app.icon_and_avatars_table
             ),
             &[],
         )
@@ -183,7 +188,7 @@ async fn handle_upload(
                 while let Some(chunk) = field.next().await {
                     let chunk = chunk?;
                     file_bytes.extend_from_slice(&chunk);
-                    if file_bytes.len() > MAX_UPLOAD_BYTES {
+                    if file_bytes.len() > data.settings.app.max_upload_bytes {
                         let html = render_upload_page(
                             &data.templates,
                             None,
@@ -201,7 +206,7 @@ async fn handle_upload(
                 while let Some(chunk) = field.next().await {
                     let chunk = chunk?;
                     base64_text.push_str(&String::from_utf8_lossy(&chunk));
-                    if base64_text.len() > MAX_UPLOAD_BYTES * 4 / 3 + 4 {
+                    if base64_text.len() > data.settings.app.max_upload_bytes * 4 / 3 + 4 {
                         let html = render_upload_page(
                             &data.templates,
                             None,
@@ -425,7 +430,7 @@ async fn get_image_by_md5(
 
     let query = format!(
         "SELECT \"imageData\" FROM \"{}\" WHERE hash = $1",
-        ICON_AND_AVATARS_TABLE
+        data.settings.app.icon_and_avatars_table
     );
 
     let row = client.query_opt(&query, &[&hash]).await.map_err(|e| {
@@ -451,7 +456,7 @@ async fn get_image_by_md5(
     }
 }
 
-async fn ensure_schema(pool: &Pool) -> std::io::Result<()> {
+async fn ensure_schema(pool: &Pool, icon_table: &str) -> std::io::Result<()> {
     let client = pool.get().await.map_err(|e| {
         error!("Failed to get database client: {}", e);
         std::io::Error::new(std::io::ErrorKind::Other, "Database client creation failed")
@@ -468,7 +473,7 @@ CREATE TABLE IF NOT EXISTS "{icon_table}" (
     PRIMARY KEY ("snowflakeTargetId", hash)
 );
 "#,
-        icon_table = ICON_AND_AVATARS_TABLE
+        icon_table = icon_table
     );
 
     client.batch_execute(&schema).await.map_err(|e| {
@@ -510,14 +515,18 @@ async fn main() -> std::io::Result<()> {
         std::io::Error::new(std::io::ErrorKind::Other, "Database pool creation failed")
     })?;
 
-    ensure_schema(&pool).await?;
+    ensure_schema(&pool, &settings.app.icon_and_avatars_table).await?;
 
     let templates = build_template_env();
 
+    let cache_size = NonZeroUsize::new(settings.app.cache_size)
+    .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "app.cache_size must be > 0"))?;
+
     let app_state = web::Data::new(AppState {
-        images: Mutex::new(LruCache::new(NonZeroUsize::new(CACHE_SIZE).unwrap())),
+        images: Mutex::new(LruCache::new(cache_size)),
         db_pool: pool,
         templates,
+        settings: settings.clone(),
     });
 
     info!(
@@ -528,7 +537,7 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(move || {
         App::new()
             .app_data(app_state.clone())
-            .app_data(web::PayloadConfig::new(MAX_UPLOAD_BYTES))
+            .app_data(web::PayloadConfig::new(settings.app.max_upload_bytes))
             .wrap(actix_web::middleware::Logger::default())
             .route("/", web::get().to(index))
             .route("/explore", web::get().to(explore_page))

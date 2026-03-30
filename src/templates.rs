@@ -1,8 +1,6 @@
 use minijinja::{context, path_loader, Environment};
 use serde::Serialize;
 
-const CACHE_SIZE: usize = 10_000;
-
 #[derive(Debug, Serialize, Clone)]
 pub struct ExploreCache {
     pub id: String,
@@ -21,26 +19,16 @@ pub fn build_template_env() -> Environment<'static> {
     env
 }
 
-fn render_notice(message: Option<&str>, level: &str) -> String {
-    match message {
-        Some(message) => format!(
-            "<div class=\"notice {}\">{}</div>",
-            level,
-            minijinja::value::Value::from(message)
-        ),
-        None => String::new(),
-    }
-}
-
 pub fn render_index_page(
     env: &Environment<'static>,
     cache_count: usize,
     db_count: i64,
+    cache_capacity: usize,
 ) -> Result<String, minijinja::Error> {
     let body = env.get_template("index.html")?.render(context! {
         cache_count => cache_count,
         db_count => db_count,
-        cache_capacity => CACHE_SIZE,
+        cache_capacity => cache_capacity,
     })?;
 
     env.get_template("base.html")?.render(context! {
