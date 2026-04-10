@@ -73,12 +73,18 @@ pub fn render_explore_page(
     page: usize,
     total_pages: usize,
     db_total: i64,
+    source: &str,
+    legacy_enabled: bool,
+    ref_enabled: bool,
 ) -> Result<String, minijinja::Error> {
     let body = env.get_template("explore.html")?.render(context! {
         cache_entries => cache_entries,
         db_entries => db_entries,
         cache_count => cache_entries.len(),
         db_count => db_total,
+        source => source,
+        legacy_enabled => legacy_enabled,
+        ref_enabled => ref_enabled,
         page => page,
         total_pages => total_pages,
         has_prev => page > 1,

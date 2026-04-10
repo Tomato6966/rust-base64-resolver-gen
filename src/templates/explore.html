@@ -24,6 +24,19 @@
   </article>
 </section>
 
+<section class="paper card" style="margin-bottom:14px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+  <strong>Database source:</strong>
+  {% if legacy_enabled %}
+    <a class="pager-link {{ 'active' if source == 'legacy' else '' }}" href="/explore?page=1&source=legacy">Legacy</a>
+  {% endif %}
+  {% if ref_enabled %}
+    <a class="pager-link {{ 'active' if source == 'ref' else '' }}" href="/explore?page=1&source=ref">New Ref</a>
+  {% endif %}
+  {% if legacy_enabled and ref_enabled %}
+    <a class="pager-link {{ 'active' if source == 'both' else '' }}" href="/explore?page=1&source=both">Both</a>
+  {% endif %}
+</section>
+
 <section class="grid two" style="flex:1; min-height:0;">
 
   <!-- Cache panel -->
@@ -103,11 +116,11 @@
       <span class="small">Page {{ page }} of {{ total_pages }}</span>
       <div class="pager-links">
         {% if has_prev %}
-          <a class="pager-link" href="/explore?page={{ prev_page }}">← Prev</a>
+          <a class="pager-link" href="/explore?page={{ prev_page }}&source={{ source }}">← Prev</a>
         {% endif %}
-        <a class="pager-link active" href="/explore?page={{ page }}">{{ page }}</a>
+        <a class="pager-link active" href="/explore?page={{ page }}&source={{ source }}">{{ page }}</a>
         {% if has_next %}
-          <a class="pager-link" href="/explore?page={{ next_page }}">Next →</a>
+          <a class="pager-link" href="/explore?page={{ next_page }}&source={{ source }}">Next →</a>
         {% endif %}
       </div>
     </div>

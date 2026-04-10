@@ -7,9 +7,12 @@ url = "postgresql://postgres:password@localhost:5432/image_db"
 
 [app]
 cache_size = 10000
-icon_and_avatars_table = "iconAndAvatars"
+legacy_icon_and_avatars_enabled = true
+icon_and_avatars_table = "IconAndAvatars"
+ref_icon_and_avatar_enabled = true
+icon_and_avatar_ref_table = "IconAndAvatarRef"
+image_blob_table = "ImageBlob"
 max_upload_bytes = 52428800 # 50 MB
-
 
 [auth]
 enabled = true

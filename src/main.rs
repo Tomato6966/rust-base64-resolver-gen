@@ -43,8 +43,37 @@ struct DatabaseSettings {
 #[derive(Debug, Deserialize, Clone)]
 struct AppSettings {
     cache_size: usize,
+    #[serde(default = "default_legacy_enabled")]
+    legacy_icon_and_avatars_enabled: bool,
+    #[serde(default = "default_legacy_icon_table")]
     icon_and_avatars_table: String,
+    #[serde(default = "default_ref_enabled")]
+    ref_icon_and_avatar_enabled: bool,
+    #[serde(default = "default_ref_table")]
+    icon_and_avatar_ref_table: String,
+    #[serde(default = "default_blob_table")]
+    image_blob_table: String,
     max_upload_bytes: usize,
+}
+
+fn default_legacy_enabled() -> bool {
+    true
+}
+
+fn default_ref_enabled() -> bool {
+    false
+}
+
+fn default_legacy_icon_table() -> String {
+    "IconAndAvatars".to_string()
+}
+
+fn default_ref_table() -> String {
+    "IconAndAvatarRef".to_string()
+}
+
+fn default_blob_table() -> String {
+    "ImageBlob".to_string()
 }
 
 struct AppState {
@@ -62,6 +91,24 @@ struct Base64Payload {
 #[derive(Deserialize)]
 struct ExploreQuery {
     page: Option<usize>,
+    source: Option<String>,
+}
+
+#[derive(Clone, Copy)]
+enum ExploreSource {
+    Legacy,
+    Ref,
+    Both,
+}
+
+impl ExploreSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Legacy => "legacy",
+            Self::Ref => "ref",
+            Self::Both => "both",
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -150,18 +197,12 @@ fn detect_content_type(bytes: &[u8]) -> Option<&'static str> {
 
 async fn index(data: web::Data<AppState>) -> impl Responder {
     let cache_count = data.images.lock().unwrap().len();
+    let source = resolve_explore_source(None, &data.settings.app);
 
     let db_count: i64 = match data.db_pool.get().await {
-        Ok(client) => {
-            client
-                .query_one(
-                    &format!("SELECT COUNT(*) FROM \"{}\"", data.settings.app.icon_and_avatars_table),
-                    &[],
-                )
-                .await
-                .map(|row| row.get(0))
-                .unwrap_or(0)
-        }
+        Ok(client) => get_total_count(&client, &data.settings.app, source)
+            .await
+            .unwrap_or(0),
         Err(_) => 0,
     };
 
@@ -188,6 +229,7 @@ async fn explore_page(
     let per_page: i64 = 50;
     let page = query.page.unwrap_or(1).max(1) as i64;
     let offset = (page - 1) * per_page;
+    let selected_source = resolve_explore_source(query.source.as_deref(), &data.settings.app);
 
     let cache_entries: Vec<ExploreCache> = {
         let cache = data.images.lock().unwrap();
@@ -199,49 +241,26 @@ async fn explore_page(
         actix_web::error::ErrorInternalServerError("Database connection failed")
     })?;
 
-    let db_total: i64 = client
-        .query_one(
-            &format!(
-                "SELECT COUNT(*) FROM \"{}\"",
-                data.settings.app.icon_and_avatars_table
-            ),
-            &[],
-        )
+    let db_total = get_total_count(&client, &data.settings.app, selected_source)
         .await
         .map_err(|e| {
             error!("Failed to count DB images for explore: {}", e);
             actix_web::error::ErrorInternalServerError("Image count query failed")
-        })?
-        .get(0);
+        })
+        .unwrap_or(0);
 
-    let db_entries: Vec<ExploreDb> = client
-        .query(
-            &format!(
-                r#"
-                SELECT
-                    hash,
-                    COALESCE("metaNameData", ''),
-                    TO_CHAR("savedAt", 'YYYY-MM-DD HH24:MI:SS')
-                FROM "{}"
-                ORDER BY "savedAt" DESC
-                LIMIT $1 OFFSET $2
-                "#,
-                data.settings.app.icon_and_avatars_table
-            ),
-            &[&per_page, &offset],
-        )
+    let db_entries = get_explore_entries(
+        &client,
+        &data.settings.app,
+        selected_source,
+        per_page,
+        offset,
+    )
         .await
         .map_err(|e| {
             error!("Failed to fetch DB images for explore: {}", e);
             actix_web::error::ErrorInternalServerError("Image query failed")
-        })?
-        .into_iter()
-        .map(|row| ExploreDb {
-            hash: row.get(0),
-            meta_name: row.get(1),
-            saved_at: row.get(2),
-        })
-        .collect();
+        })?;
 
     let total_pages = if db_total == 0 {
         1
@@ -256,6 +275,9 @@ async fn explore_page(
         page as usize,
         total_pages,
         db_total,
+        selected_source.as_str(),
+        data.settings.app.legacy_icon_and_avatars_enabled,
+        data.settings.app.ref_icon_and_avatar_enabled,
     )
     .map_err(|e| {
         error!("Template render error on explore: {}", e);
@@ -565,42 +587,223 @@ async fn get_image_by_md5(
         actix_web::error::ErrorInternalServerError("Database connection failed")
     })?;
 
-    let query = format!(
-        "SELECT \"imageData\" FROM \"{}\" WHERE hash = $1",
-        data.settings.app.icon_and_avatars_table
-    );
-
-    let row = client.query_opt(&query, &[&hash]).await.map_err(|e| {
-        error!("GET /md5/{} - Database query error: {}", hash, e);
-        actix_web::error::ErrorInternalServerError("Database query failed")
-    })?;
-
-    match row {
-        Some(row) => {
-            let base64_str: String = row.get("imageData");
-            match STANDARD.decode(&base64_str) {
-                Ok(image_data) => {
-                    let ct = detect_content_type(&image_data).unwrap_or("image/png");
-                    Ok(HttpResponse::Ok().content_type(ct).body(image_data))
-                }
-                Err(e) => {
-                    error!("GET /md5/{} - Failed to decode base64: {}", hash, e);
-                    Ok(HttpResponse::InternalServerError().body("Failed to decode image data"))
-                }
-            }
+    match get_image_by_hash(&client, &data.settings.app, &hash).await {
+        Ok(Some(image_data)) => {
+            let ct = detect_content_type(&image_data).unwrap_or("image/png");
+            Ok(HttpResponse::Ok().content_type(ct).body(image_data))
         }
-        None => Ok(HttpResponse::NotFound().body("Image not found")),
+        Ok(None) => Ok(HttpResponse::NotFound().body("Image not found")),
+        Err(e) => {
+            error!("GET /md5/{} - Database query error: {}", hash, e);
+            Err(actix_web::error::ErrorInternalServerError(
+                "Database query failed",
+            ))
+        }
     }
 }
 
-async fn ensure_schema(pool: &Pool, icon_table: &str) -> std::io::Result<()> {
+fn resolve_explore_source(requested: Option<&str>, app: &AppSettings) -> ExploreSource {
+    match requested.map(|s| s.to_ascii_lowercase()) {
+        Some(s) if s == "legacy" && app.legacy_icon_and_avatars_enabled => ExploreSource::Legacy,
+        Some(s) if s == "ref" && app.ref_icon_and_avatar_enabled => ExploreSource::Ref,
+        Some(s) if s == "both" && app.legacy_icon_and_avatars_enabled && app.ref_icon_and_avatar_enabled => ExploreSource::Both,
+        _ if app.legacy_icon_and_avatars_enabled && app.ref_icon_and_avatar_enabled => ExploreSource::Both,
+        _ if app.legacy_icon_and_avatars_enabled => ExploreSource::Legacy,
+        _ if app.ref_icon_and_avatar_enabled => ExploreSource::Ref,
+        _ => ExploreSource::Both,
+    }
+}
+
+async fn get_total_count(
+    client: &tokio_postgres::Client,
+    app: &AppSettings,
+    source: ExploreSource,
+) -> Result<i64, tokio_postgres::Error> {
+    if matches!(source, ExploreSource::Both)
+        && app.legacy_icon_and_avatars_enabled
+        && app.ref_icon_and_avatar_enabled
+    {
+        let query = format!(
+            r#"
+            SELECT
+                (SELECT COUNT(*) FROM "{legacy_table}") +
+                (SELECT COUNT(*) FROM "{ref_table}") AS total
+            "#,
+            legacy_table = app.icon_and_avatars_table,
+            ref_table = app.icon_and_avatar_ref_table,
+        );
+        return client.query_one(&query, &[]).await.map(|r| r.get(0));
+    }
+
+    if matches!(source, ExploreSource::Legacy) && app.legacy_icon_and_avatars_enabled {
+        let query = format!(r#"SELECT COUNT(*) FROM "{}""#, app.icon_and_avatars_table);
+        return client.query_one(&query, &[]).await.map(|r| r.get(0));
+    }
+
+    if matches!(source, ExploreSource::Ref) && app.ref_icon_and_avatar_enabled {
+        let query = format!(r#"SELECT COUNT(*) FROM "{}""#, app.icon_and_avatar_ref_table);
+        return client.query_one(&query, &[]).await.map(|r| r.get(0));
+    }
+
+    Ok(0)
+}
+
+async fn get_explore_entries(
+    client: &tokio_postgres::Client,
+    app: &AppSettings,
+    source: ExploreSource,
+    per_page: i64,
+    offset: i64,
+) -> Result<Vec<ExploreDb>, tokio_postgres::Error> {
+    if matches!(source, ExploreSource::Both)
+        && app.legacy_icon_and_avatars_enabled
+        && app.ref_icon_and_avatar_enabled
+    {
+        let query = format!(
+            r#"
+            SELECT hash, meta_name, saved_at FROM (
+                SELECT
+                    hash,
+                    COALESCE("metaNameData", '') AS meta_name,
+                    TO_CHAR("savedAt", 'YYYY-MM-DD HH24:MI:SS') AS saved_at,
+                    "savedAt" AS sort_saved_at
+                FROM "{legacy_table}"
+                UNION ALL
+                SELECT
+                    hash,
+                    COALESCE("metaNameData", '') AS meta_name,
+                    TO_CHAR("savedAt", 'YYYY-MM-DD HH24:MI:SS') AS saved_at,
+                    "savedAt" AS sort_saved_at
+                FROM "{ref_table}"
+            ) merged
+            ORDER BY sort_saved_at DESC
+            LIMIT $1 OFFSET $2
+            "#,
+            legacy_table = app.icon_and_avatars_table,
+            ref_table = app.icon_and_avatar_ref_table,
+        );
+
+        return client
+            .query(&query, &[&per_page, &offset])
+            .await
+            .map(|rows| {
+                rows.into_iter()
+                    .map(|row| ExploreDb {
+                        hash: row.get(0),
+                        meta_name: row.get(1),
+                        saved_at: row.get(2),
+                    })
+                    .collect()
+            });
+    }
+
+    if matches!(source, ExploreSource::Legacy) && app.legacy_icon_and_avatars_enabled {
+        let query = format!(
+            r#"
+            SELECT
+                hash,
+                COALESCE("metaNameData", ''),
+                TO_CHAR("savedAt", 'YYYY-MM-DD HH24:MI:SS')
+            FROM "{}"
+            ORDER BY "savedAt" DESC
+            LIMIT $1 OFFSET $2
+            "#,
+            app.icon_and_avatars_table
+        );
+
+        return client.query(&query, &[&per_page, &offset]).await.map(|rows| {
+            rows.into_iter()
+                .map(|row| ExploreDb {
+                    hash: row.get(0),
+                    meta_name: row.get(1),
+                    saved_at: row.get(2),
+                })
+                .collect()
+        });
+    }
+
+    if matches!(source, ExploreSource::Ref) && app.ref_icon_and_avatar_enabled {
+        let query = format!(
+            r#"
+            SELECT
+                hash,
+                COALESCE("metaNameData", ''),
+                TO_CHAR("savedAt", 'YYYY-MM-DD HH24:MI:SS')
+            FROM "{}"
+            ORDER BY "savedAt" DESC
+            LIMIT $1 OFFSET $2
+            "#,
+            app.icon_and_avatar_ref_table
+        );
+
+        return client.query(&query, &[&per_page, &offset]).await.map(|rows| {
+            rows.into_iter()
+                .map(|row| ExploreDb {
+                    hash: row.get(0),
+                    meta_name: row.get(1),
+                    saved_at: row.get(2),
+                })
+                .collect()
+        });
+    }
+
+    Ok(Vec::new())
+}
+
+async fn get_image_by_hash(
+    client: &tokio_postgres::Client,
+    app: &AppSettings,
+    hash: &str,
+) -> Result<Option<Vec<u8>>, tokio_postgres::Error> {
+    if app.legacy_icon_and_avatars_enabled {
+        let legacy_query = format!(
+            r#"SELECT "imageData" FROM "{}" WHERE hash = $1 LIMIT 1"#,
+            app.icon_and_avatars_table
+        );
+
+        if let Some(row) = client.query_opt(&legacy_query, &[&hash]).await? {
+            let base64_str: String = row.get("imageData");
+            match STANDARD.decode(&base64_str) {
+                Ok(image_data) => return Ok(Some(image_data)),
+                Err(e) => {
+                    error!("GET /md5/{} - Failed to decode legacy base64 data: {}", hash, e);
+                }
+            }
+        }
+    }
+
+    if app.ref_icon_and_avatar_enabled {
+        let ref_query = format!(
+            r#"
+            SELECT b."imageData"
+            FROM "{ref_table}" r
+            INNER JOIN "{blob_table}" b ON r.hash = b.hash
+            WHERE r.hash = $1
+            ORDER BY r."savedAt" DESC
+            LIMIT 1
+            "#,
+            ref_table = app.icon_and_avatar_ref_table,
+            blob_table = app.image_blob_table,
+        );
+
+        if let Some(row) = client.query_opt(&ref_query, &[&hash]).await? {
+            let image_data: Vec<u8> = row.get(0);
+            return Ok(Some(image_data));
+        }
+    }
+
+    Ok(None)
+}
+
+async fn ensure_schema(pool: &Pool, app: &AppSettings) -> std::io::Result<()> {
     let client = pool.get().await.map_err(|e| {
         error!("Failed to get database client: {}", e);
         std::io::Error::new(std::io::ErrorKind::Other, "Database client creation failed")
     })?;
 
-    let schema = format!(
-        r#"
+    if app.legacy_icon_and_avatars_enabled {
+        let legacy_schema = format!(
+            r#"
 CREATE TABLE IF NOT EXISTS "{icon_table}" (
     "snowflakeTargetId" TEXT NOT NULL,
     hash TEXT NOT NULL,
@@ -610,13 +813,50 @@ CREATE TABLE IF NOT EXISTS "{icon_table}" (
     PRIMARY KEY ("snowflakeTargetId", hash)
 );
 "#,
-        icon_table = icon_table
-    );
+            icon_table = app.icon_and_avatars_table
+        );
 
-    client.batch_execute(&schema).await.map_err(|e| {
-        error!("Failed to initialize database schema: {}", e);
-        std::io::Error::new(std::io::ErrorKind::Other, "Database schema initialization failed")
-    })
+        client.batch_execute(&legacy_schema).await.map_err(|e| {
+            error!("Failed to initialize legacy database schema: {}", e);
+            std::io::Error::new(std::io::ErrorKind::Other, "Database schema initialization failed")
+        })?;
+    }
+
+    if app.ref_icon_and_avatar_enabled {
+        let new_schema = format!(
+            r#"
+CREATE TABLE IF NOT EXISTS "{blob_table}" (
+    hash TEXT PRIMARY KEY,
+    "mimeType" TEXT,
+    "sizeBytes" INT NOT NULL,
+    "imageData" BYTEA NOT NULL,
+    "createdAt" TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS "{ref_table}" (
+    "snowflakeTargetId" TEXT NOT NULL,
+    hash TEXT NOT NULL,
+    "metaNameData" TEXT NOT NULL,
+    "savedAt" TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY ("snowflakeTargetId", hash),
+    CONSTRAINT "{ref_table}_hash_fkey"
+        FOREIGN KEY (hash) REFERENCES "{blob_table}" (hash)
+        ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS "{ref_table}_hash_idx" ON "{ref_table}" (hash);
+"#,
+            ref_table = app.icon_and_avatar_ref_table,
+            blob_table = app.image_blob_table,
+        );
+
+        client.batch_execute(&new_schema).await.map_err(|e| {
+            error!("Failed to initialize new reference/blob schema: {}", e);
+            std::io::Error::new(std::io::ErrorKind::Other, "Database schema initialization failed")
+        })?;
+    }
+
+    Ok(())
 }
 
 #[actix_web::main]
@@ -652,7 +892,7 @@ async fn main() -> std::io::Result<()> {
         std::io::Error::new(std::io::ErrorKind::Other, "Database pool creation failed")
     })?;
 
-    ensure_schema(&pool, &settings.app.icon_and_avatars_table).await?;
+    ensure_schema(&pool, &settings.app).await?;
 
     let templates = build_template_env();
 
